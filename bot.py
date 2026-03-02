@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-LegendsHR Bot v3.0
-Telegram bot for collecting employee data to Excel
-Clean architecture with robust state management
+LegendsHR Bot v4.0
+Telegram bot for collecting employee data → sends to Telegram channel
+No database needed!
 """
 
 import os
 import logging
 from datetime import datetime
 from typing import Optional
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -19,13 +19,13 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from db_storage import init_db, save_employee
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
 TOKEN = os.environ.get("BOT_TOKEN", "8522819299:AAF06NWPJPwi-T21_OT7Xc416tdiztHStVo")
+CHANNEL_ID = int(os.environ.get("CHANNEL_ID", "-1003670705313"))
 
 # States
 (
@@ -127,6 +127,19 @@ T = {
     },
 }
 
+# Action emojis for channel messages
+ACTION_EMOJI = {
+    ACT_REQUISITES: "💳",
+    ACT_NEW_EMPLOYEE: "👤",
+    ACT_CHANGE_CONTACTS: "📞",
+}
+
+ACTION_TITLES = {
+    ACT_REQUISITES: "Зміна реквізитів",
+    ACT_NEW_EMPLOYEE: "Новий співробітник",
+    ACT_CHANGE_CONTACTS: "Зміна контактів",
+}
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -147,16 +160,35 @@ def t(ctx: ContextTypes.DEFAULT_TYPE, key: str) -> str:
     return T.get(lang, T[LANG_UK]).get(key, key)
 
 
-def save_data(action: str, name: str, value: str, user_id: int, username: Optional[str]):
-    """Save entry to database (PostgreSQL on Railway, Excel locally)."""
-    save_employee(
-        action=action,
-        name=name,
-        wallet=value if action == ACT_REQUISITES else "",
-        telegram=value if action != ACT_REQUISITES else "",
-        language=str(user_id)  # Store user_id in language field for now
+async def send_to_channel(bot: Bot, action: str, name: str, value: str, user_id: int, username: Optional[str]):
+    """Send data to Telegram channel instead of database."""
+    emoji = ACTION_EMOJI.get(action, "📋")
+    title = ACTION_TITLES.get(action, action)
+    
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    user_link = f"@{username}" if username else f"ID: {user_id}"
+    
+    if action == ACT_REQUISITES:
+        value_label = "💰 Гаманець"
+    else:
+        value_label = "📱 Телеграм"
+    
+    message = (
+        f"{emoji} *{title}*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"👤 *Ім'я:* {name}\n"
+        f"{value_label}: `{value}`\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"🕐 {now}\n"
+        f"👁 Від: {user_link}"
     )
-    log.info(f"Saved: {action} | {name} | {value} | {user_id}")
+    
+    await bot.send_message(
+        chat_id=CHANNEL_ID,
+        text=message,
+        parse_mode="Markdown"
+    )
+    log.info(f"Sent to channel: {action} | {name} | {user_link}")
 
 
 async def send_or_edit(update: Update, text: str, keyboard: list, parse_mode: str = "Markdown"):
@@ -279,14 +311,15 @@ async def on_confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     choice = update.callback_query.data.split(":")[1]
     
     if choice == "yes":
-        # Save to Excel
+        # Send to channel
         user = update.effective_user
-        save_data(
-            ctx.user_data["action"],
-            ctx.user_data["name"],
-            ctx.user_data["value"],
-            user.id,
-            user.username
+        await send_to_channel(
+            bot=ctx.bot,
+            action=ctx.user_data["action"],
+            name=ctx.user_data["name"],
+            value=ctx.user_data["value"],
+            user_id=user.id,
+            username=user.username
         )
         
         keyboard = [[InlineKeyboardButton(t(ctx, "btn_restart"), callback_data="restart")]]
@@ -326,7 +359,7 @@ async def error_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    init_db()
+    log.info(f"Channel ID: {CHANNEL_ID}")
     
     app = Application.builder().token(TOKEN).build()
     
@@ -368,7 +401,7 @@ def main():
     app.add_handler(conv)
     app.add_error_handler(error_handler)
     
-    log.info("🚀 LegendsHR Bot started!")
+    log.info("🚀 LegendsHR Bot v4.0 started! (Channel mode)")
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
